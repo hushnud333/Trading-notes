@@ -1,0 +1,6 @@
+{
+  "name": "Crypto Trading Journal",
+  "description": "A responsive, dark-themed crypto trading journal and notes dashboard with offline LocalStorage persistence and Gemini AI-powered trading coaching, setup analysis, and portfolio diagnostics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
