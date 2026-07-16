@@ -7,16 +7,32 @@ import React, { useState } from "react";
 import { TradeEntry, JournalStats } from "../types";
 import { 
   TrendingUp, BarChart3, AlertOctagon, RefreshCw, Sparkles, BookOpen, 
-  Percent, DollarSign, Activity, Award, Compass, Heart
+  Percent, DollarSign, Activity, Award, Compass, Heart, Calendar, ArrowUpRight, ArrowDownRight
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ReferenceLine
+} from "recharts";
 
 interface AnalyticsPanelProps {
   trades: TradeEntry[];
   onGenerateDiagnostics: () => Promise<string>;
   cachedDiagnostics: string;
+  currentPrices?: Record<string, number>;
 }
 
-export default function AnalyticsPanel({ trades, onGenerateDiagnostics, cachedDiagnostics }: AnalyticsPanelProps) {
+export default function AnalyticsPanel({ 
+  trades, 
+  onGenerateDiagnostics, 
+  cachedDiagnostics,
+  currentPrices = {}
+}: AnalyticsPanelProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [reportText, setReportText] = useState(cachedDiagnostics);
   const [errMessage, setErrMessage] = useState("");
@@ -36,17 +52,178 @@ export default function AnalyticsPanel({ trades, onGenerateDiagnostics, cachedDi
   const winRate = resolvedTrades > 0 ? Math.round((winCount / resolvedTrades) * 100) : 0;
 
   // Total volume traded
-  const totalVolume = trades.reduce((acc, t) => acc + (t.price * t.amount * t.leverage), 0);
+  const totalVolume = trades.reduce((acc, t) => acc + (t.price * t.amount), 0);
 
   // Buy vs Sell distribution
   const buyTrades = trades.filter((t) => t.action === "BUY");
   const sellTrades = trades.filter((t) => t.action === "SELL");
-  const buyVolume = buyTrades.reduce((acc, t) => acc + (t.price * t.amount * t.leverage), 0);
-  const sellVolume = sellTrades.reduce((acc, t) => acc + (t.price * t.amount * t.leverage), 0);
+  const buyVolume = buyTrades.reduce((acc, t) => acc + (t.price * t.amount), 0);
+  const sellVolume = sellTrades.reduce((acc, t) => acc + (t.price * t.amount), 0);
 
-  // Calculate leverage hazard metrics
-  const highLeverageTrades = trades.filter((t) => t.leverage > 20);
-  const avgLeverage = totalTrades > 0 ? Math.round(trades.reduce((sum, t) => sum + t.leverage, 0) / totalTrades) : 0;
+  // Calculate trade allocation metrics
+  const avgTradeSize = totalTrades > 0 ? Math.round(totalVolume / totalTrades) : 0;
+  const largeTrades = trades.filter((t) => (t.price * t.amount) > 1000);
+
+  // Calculate cumulative profit/loss over time
+  const getCumulativePnLData = () => {
+    const sortedTrades = [...trades].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    let runningPnL = 0;
+    const chartPoints = sortedTrades.map((t, index) => {
+      const currentPrice = currentPrices[t.coin] || t.price;
+      let tradePnL = 0;
+      if (t.action === "BUY") {
+        tradePnL = (currentPrice - t.price) * t.amount;
+      } else {
+        tradePnL = (t.price - currentPrice) * t.amount;
+      }
+      runningPnL += tradePnL;
+      
+      return {
+        id: t.id,
+        coin: t.coin,
+        action: t.action,
+        price: t.price,
+        currentPrice: currentPrice,
+        amount: t.amount,
+        tradeIndex: index + 1,
+        timestamp: t.timestamp,
+        dateLabel: new Date(t.timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        tradePnL: Number(tradePnL.toFixed(2)),
+        cumulativePnL: Number(runningPnL.toFixed(2)),
+      };
+    });
+
+    // If empty, return a default starting point
+    if (chartPoints.length === 0) {
+      return [{ dateLabel: "Boshlanish", cumulativePnL: 0, tradePnL: 0, coin: "N/A", action: "N/A", price: 0, currentPrice: 0, amount: 0, timestamp: new Date().toISOString() }];
+    }
+
+    // Prepend a starting zero point for visual elegance
+    return [
+      { dateLabel: "Start", cumulativePnL: 0, tradePnL: 0, coin: "N/A", action: "N/A", price: 0, currentPrice: 0, amount: 0, timestamp: chartPoints[0]?.timestamp || new Date().toISOString() },
+      ...chartPoints
+    ];
+  };
+
+  const chartData = getCumulativePnLData();
+  const finalCumulativePnL = chartData[chartData.length - 1]?.cumulativePnL || 0;
+  const isOverallProfit = finalCumulativePnL >= 0;
+  const lineColor = isOverallProfit ? "#10b981" : "#f43f5e";
+
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      if (data.dateLabel === "Start" || data.coin === "N/A") {
+        return (
+          <div className="bg-[#0b0f19]/95 border border-slate-800 p-3 rounded-xl shadow-2xl text-xs font-mono backdrop-blur-md">
+            <div className="flex items-center gap-1.5 text-slate-400 font-bold mb-1.5 border-b border-slate-800/60 pb-1.5">
+              <Activity className="h-3.5 w-3.5 text-blue-400" />
+              <span>Savdolar Boshlanishi</span>
+            </div>
+            <p className="text-slate-400 font-mono">Kumulyativ Foyda: <span className="text-white font-bold">$0.00</span></p>
+          </div>
+        );
+      }
+
+      const isPointProfit = data.cumulativePnL >= 0;
+      const isTradeProfit = data.tradePnL >= 0;
+      const fullDate = new Date(data.timestamp).toLocaleString("uz-UZ", {
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+
+      // Calculate percentage return for this specific trade
+      const tradeCost = data.price * data.amount;
+      const tradePercent = tradeCost > 0 ? (data.tradePnL / tradeCost) * 100 : 0;
+
+      return (
+        <div className={`bg-[#0b0f19]/95 border ${
+          isPointProfit ? "border-emerald-500/30" : "border-rose-500/30"
+        } p-3.5 rounded-xl shadow-2xl backdrop-blur-md text-xs font-mono min-w-[270px] space-y-3`}>
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
+            <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">
+              Savdo #{data.tradeIndex}
+            </span>
+            <div className="flex items-center gap-1 text-[10px] text-slate-400">
+              <Calendar className="h-3 w-3 text-slate-500" />
+              <span>{data.dateLabel}</span>
+            </div>
+          </div>
+
+          {/* Details list */}
+          <div className="space-y-1 text-[11px]">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500">Asset & Operatsiya:</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-white font-bold">{data.coin}</span>
+                <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold ${
+                  data.action === "BUY" 
+                    ? "bg-emerald-950/40 text-emerald-400 border border-emerald-500/20" 
+                    : "bg-rose-950/40 text-rose-400 border border-rose-500/20"
+                }`}>
+                  {data.action === "BUY" ? "BUY" : "SELL"}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-between">
+              <span className="text-slate-500">Miqdor (Hajm):</span>
+              <span className="text-slate-300 font-semibold">{data.amount} units</span>
+            </div>
+
+            <div className="flex justify-between">
+              <span className="text-slate-500">Kirish Narxi:</span>
+              <span className="text-slate-300 font-semibold">${data.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+
+            <div className="flex justify-between">
+              <span className="text-slate-500">Hozirgi Narx:</span>
+              <span className="text-emerald-400 font-semibold">${data.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+
+          {/* Trade result and cumulative result */}
+          <div className="space-y-2 pt-1 border-t border-slate-800/40">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400">Savdo PnL:</span>
+              <div className={`flex items-center gap-1 font-bold ${isTradeProfit ? "text-emerald-400" : "text-rose-400"}`}>
+                {isTradeProfit ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+                <span>
+                  {isTradeProfit ? "+" : ""}${data.tradePnL.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+                <span className={`text-[10px] font-semibold ${isTradeProfit ? "text-emerald-500" : "text-rose-500"}`}>
+                  ({isTradeProfit ? "+" : ""}{tradePercent.toFixed(2)}%)
+                </span>
+              </div>
+            </div>
+
+            {/* Total cumulative PnL highlight block */}
+            <div className={`p-2 rounded-lg border flex items-center justify-between ${
+              isPointProfit 
+                ? "bg-emerald-950/10 border-emerald-500/10" 
+                : "bg-rose-950/10 border-rose-500/10"
+            }`}>
+              <span className="text-slate-400 text-[10px] font-semibold">Kumulyativ PnL:</span>
+              <span className={`font-extrabold text-xs ${isPointProfit ? "text-emerald-400" : "text-rose-400"}`}>
+                {isPointProfit ? "+" : ""}${data.cumulativePnL.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+          </div>
+
+          {/* Full Timestamp */}
+          <div className="text-[9px] text-slate-500 text-right">
+            {fullDate}
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
 
   const triggerDiagnostics = async () => {
     setIsGenerating(true);
@@ -141,30 +318,97 @@ export default function AnalyticsPanel({ trades, onGenerateDiagnostics, cachedDi
           <div className="font-mono text-xl font-bold text-white leading-8">
             ${totalVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}
           </div>
-          <div className="text-[10px] text-amber-500 mt-1 font-mono">
-            Leverage hisobga olingan holda
+          <div className="text-[10px] text-emerald-400 mt-1 font-mono">
+            Spot savdo qiymati
           </div>
         </div>
 
-        {/* Leverage Monitor */}
+        {/* O'rtacha Savdo Card */}
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 backdrop-blur-md">
           <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-[10px] font-mono uppercase tracking-wider">O'rtacha Leverage</span>
-            <Award className="h-4 w-4 text-amber-400" />
+            <span className="text-[10px] font-mono uppercase tracking-wider">O'rtacha Savdo</span>
+            <Award className="h-4 w-4 text-purple-400" />
           </div>
-          <div className="font-mono text-2xl font-extrabold text-amber-400">
-            {avgLeverage}x
+          <div className="font-mono text-2xl font-extrabold text-purple-400">
+            ${avgTradeSize.toLocaleString()}
           </div>
           <div className="text-[10px] text-slate-400 mt-1 font-mono flex items-center gap-1.5">
-            {highLeverageTrades.length > 0 ? (
-              <span className="text-rose-400 flex items-center gap-1">
-                <AlertOctagon className="h-3 w-3 text-rose-400" />
-                {highLeverageTrades.length} ta yuqori xavfli setup
+            {largeTrades.length > 0 ? (
+              <span className="text-emerald-400 flex items-center gap-1">
+                <TrendingUp className="h-3 w-3 text-emerald-400" />
+                {largeTrades.length} ta yirik ($1k+) pozitsiya
               </span>
             ) : (
-              <span className="text-emerald-400">Me'yoriy xavfsizlik</span>
+              <span className="text-slate-400 font-mono text-[10px]">Oddiy savdo hajmi</span>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Cumulative Profit/Loss Line Chart */}
+      <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/30 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xs font-semibold font-display text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+              <TrendingUp className="h-4 w-4 text-emerald-400" />
+              Kumulyativ Foyda/Zarar (PnL) Trendi
+            </h3>
+            <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+              Savdolarning vaqt bo'yicha umumiy daromad/zarar o'zgarish traektoriyasi
+            </p>
+          </div>
+          <div className="font-mono text-xs font-bold px-2.5 py-1 rounded bg-slate-950/50 border border-slate-800/80">
+            Jami PnL:{" "}
+            <span className={finalCumulativePnL >= 0 ? "text-emerald-400" : "text-rose-400"}>
+              {finalCumulativePnL >= 0 ? "+" : ""}${finalCumulativePnL.toLocaleString()}
+            </span>
+          </div>
+        </div>
+
+        <div className="h-64 w-full min-w-0 min-h-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={chartData}
+              margin={{ top: 15, right: 15, left: 10, bottom: 5 }}
+            >
+              <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" opacity={0.2} vertical={false} />
+              <XAxis
+                dataKey="dateLabel"
+                stroke="#475569"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+                dy={8}
+                fontFamily="JetBrains Mono, monospace"
+              />
+              <YAxis
+                stroke="#475569"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+                dx={-8}
+                tickFormatter={(v) => `${v >= 0 ? "+" : ""}$${v}`}
+                fontFamily="JetBrains Mono, monospace"
+              />
+              <Tooltip 
+                content={<CustomTooltip />} 
+                cursor={{
+                  stroke: "#475569",
+                  strokeWidth: 1.5,
+                  strokeDasharray: "4 4",
+                }}
+              />
+              <ReferenceLine y={0} stroke="#334155" strokeDasharray="3 3" opacity={0.8} />
+              <Line
+                type="monotone"
+                dataKey="cumulativePnL"
+                stroke={lineColor}
+                strokeWidth={2.5}
+                dot={{ r: 4, strokeWidth: 1.5, stroke: lineColor, fill: "#0b0f19" }}
+                activeDot={{ r: 6, strokeWidth: 0, fill: lineColor }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
 

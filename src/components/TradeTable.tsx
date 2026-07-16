@@ -17,6 +17,7 @@ interface TradeTableProps {
   onSelectEdit: (trade: TradeEntry) => void;
   onAnalyzeTrade: (trade: TradeEntry) => Promise<string>;
   analyzingTradeId: string | null;
+  currentPrices?: Record<string, number>;
 }
 
 type SortField = "timestamp" | "coin" | "price" | "total" | "status";
@@ -28,7 +29,8 @@ export default function TradeTable({
   onClearAll, 
   onSelectEdit, 
   onAnalyzeTrade,
-  analyzingTradeId
+  analyzingTradeId,
+  currentPrices = {}
 }: TradeTableProps) {
   const [search, setSearch] = useState("");
   const [actionFilter, setActionFilter] = useState<string>("ALL");
@@ -43,6 +45,22 @@ export default function TradeTable({
 
   // Clear all safety confirm state
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  // Helper to calculate PnL based on current market price
+  const getPnL = (t: TradeEntry) => {
+    const currentPrice = currentPrices[t.coin];
+    if (!currentPrice) return { pnl: 0, percent: 0 };
+
+    let pnl = 0;
+    if (t.action === "BUY") {
+      pnl = (currentPrice - t.price) * t.amount;
+    } else {
+      pnl = (t.price - currentPrice) * t.amount;
+    }
+
+    const percent = (pnl / (t.price * t.amount)) * 100;
+    return { pnl, percent };
+  };
 
   // Handle individual trade analysis
   const handleSingleTradeCoach = async (trade: TradeEntry) => {
@@ -87,8 +105,8 @@ export default function TradeTable({
       } else if (sortField === "status") {
         comparison = a.status.localeCompare(b.status);
       } else if (sortField === "total") {
-        const totalA = a.price * a.amount * a.leverage;
-        const totalB = b.price * b.amount * b.leverage;
+        const totalA = a.price * a.amount;
+        const totalB = b.price * b.amount;
         comparison = totalA - totalB;
       }
       return sortOrder === "asc" ? comparison : -comparison;
@@ -213,10 +231,11 @@ export default function TradeTable({
                     <th onClick={() => handleSort("price")} className="py-3.5 px-4 font-semibold cursor-pointer hover:text-white select-none text-right">
                       Narx ($) {renderSortArrow("price")}
                     </th>
-                    <th className="py-3.5 px-4 font-semibold text-right select-none">Hajm & Leverage</th>
+                    <th className="py-3.5 px-4 font-semibold text-right select-none">Hajm (Miqdor)</th>
                     <th onClick={() => handleSort("total")} className="py-3.5 px-4 font-semibold cursor-pointer hover:text-white select-none text-right">
-                      Umumiy Hajm {renderSortArrow("total")}
+                      Umumiy Qiymat {renderSortArrow("total")}
                     </th>
+                    <th className="py-3.5 px-4 font-semibold text-right select-none">PnL (Foyda/Zarar)</th>
                     <th onClick={() => handleSort("status")} className="py-3.5 px-4 font-semibold cursor-pointer hover:text-white select-none text-center">
                       Natija {renderSortArrow("status")}
                     </th>
@@ -229,13 +248,23 @@ export default function TradeTable({
                 <tbody className="divide-y divide-slate-800/50 text-sm font-sans">
                   {filteredTrades.map((t) => {
                     const totalVal = t.price * t.amount;
-                    const leveragedVal = totalVal * t.leverage;
+                    const { pnl, percent } = getPnL(t);
+                    const isProfit = pnl > 0;
+                    const isLoss = pnl < 0;
+                    const isCompleted = t.status !== "HOLD";
 
                     return (
                       <tr key={t.id} className="hover:bg-slate-900/40 transition-all group">
-                        <td className="py-3.5 px-4 font-mono font-bold text-white flex items-center gap-1.5">
-                          <span className="w-1 h-4 rounded bg-amber-500"></span>
-                          {t.coin}
+                        <td className="py-3.5 px-4 font-mono">
+                          <div className="font-bold text-white flex items-center gap-1.5">
+                            <span className="w-1 h-4 rounded bg-amber-500"></span>
+                            {t.coin}
+                          </div>
+                          {currentPrices[t.coin] && (
+                            <div className="text-[10px] text-slate-500 pl-2.5 mt-0.5">
+                              Live: ${currentPrices[t.coin].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3.5 px-4">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
@@ -251,10 +280,30 @@ export default function TradeTable({
                         </td>
                         <td className="py-3.5 px-4 text-right font-mono text-slate-400 text-xs">
                           <div>{t.amount} units</div>
-                          <div className="text-[10px] text-amber-500/80 font-bold">L: {t.leverage}x</div>
                         </td>
                         <td className="py-3.5 px-4 text-right font-mono text-white">
-                          ${leveragedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${totalVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono">
+                          {currentPrices[t.coin] ? (
+                            <div>
+                              <div className={`font-bold ${
+                                isProfit ? "text-emerald-400" : isLoss ? "text-rose-400" : "text-slate-400"
+                              }`}>
+                                {isProfit ? "+" : ""}${pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                              <div className={`text-[10px] font-semibold ${
+                                isProfit ? "text-emerald-500/80" : isLoss ? "text-rose-500/80" : "text-slate-500"
+                              }`}>
+                                {isProfit ? "+" : ""}{percent.toFixed(2)}%
+                                <span className="text-[9px] text-slate-500 ml-1 font-sans">
+                                  ({isCompleted ? "realized" : "floating"})
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-slate-500 text-xs">—</span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 text-center">
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono ${
@@ -308,7 +357,10 @@ export default function TradeTable({
           <div className="grid grid-cols-1 gap-3 md:hidden">
             {filteredTrades.map((t) => {
               const totalVal = t.price * t.amount;
-              const leveragedVal = totalVal * t.leverage;
+              const { pnl, percent } = getPnL(t);
+              const isProfit = pnl > 0;
+              const isLoss = pnl < 0;
+              const isCompleted = t.status !== "HOLD";
 
               return (
                 <div 
@@ -331,9 +383,6 @@ export default function TradeTable({
                       }`}>
                         {t.action === "BUY" ? "BUY" : "SELL"}
                       </span>
-                      <span className="text-[10px] font-mono text-amber-500 bg-amber-950/30 border border-amber-950/40 px-1.5 py-0.2 rounded font-bold">
-                        {t.leverage}x
-                      </span>
                     </div>
                     
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
@@ -350,20 +399,38 @@ export default function TradeTable({
                   {/* Mobile Stats Table */}
                   <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-xs font-mono bg-slate-950/30 p-2.5 rounded-lg border border-slate-900/60 mb-3">
                     <div>
-                      <span className="text-slate-500 block text-[9px] uppercase tracking-wider">Narx</span>
+                      <span className="text-slate-500 block text-[9px] uppercase tracking-wider">Kirish Narxi</span>
                       <span className="text-slate-300 font-semibold">${t.price.toLocaleString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[9px] uppercase tracking-wider">Hozirgi Narx</span>
+                      <span className="text-emerald-400 font-semibold">
+                        {currentPrices[t.coin] ? `$${currentPrices[t.coin].toLocaleString()}` : "—"}
+                      </span>
                     </div>
                     <div>
                       <span className="text-slate-500 block text-[9px] uppercase tracking-wider">Miqdor</span>
                       <span className="text-slate-300 font-semibold">{t.amount} units</span>
                     </div>
                     <div>
-                      <span className="text-slate-500 block text-[9px] uppercase tracking-wider">Hajm</span>
-                      <span className="text-white font-bold">${leveragedVal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                      <span className="text-slate-500 block text-[9px] uppercase tracking-wider">Qiymat</span>
+                      <span className="text-white font-bold">${totalVal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                     </div>
-                    <div>
-                      <span className="text-slate-500 block text-[9px] uppercase tracking-wider">Vaqt</span>
-                      <span className="text-slate-400 text-[10px]">{formatDate(t.timestamp)}</span>
+                    <div className="col-span-2 border-t border-slate-800/40 pt-1.5 mt-1 grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-slate-500 block text-[9px] uppercase tracking-wider">PnL (Foyda/Zarar)</span>
+                        {currentPrices[t.coin] ? (
+                          <span className={`font-extrabold text-[13px] ${isProfit ? "text-emerald-400" : isLoss ? "text-rose-400" : "text-slate-400"}`}>
+                            {isProfit ? "+" : ""}${pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({isProfit ? "+" : ""}{percent.toFixed(2)}%)
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">—</span>
+                        )}
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[9px] uppercase tracking-wider">Sana / Vaqt</span>
+                        <span className="text-slate-400 text-[10px]">{formatDate(t.timestamp)}</span>
+                      </div>
                     </div>
                   </div>
 
@@ -443,8 +510,8 @@ export default function TradeTable({
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[9px] uppercase">Leverage</span>
-                  <span className="text-amber-400 font-semibold">{aiModalTrade.leverage}x</span>
+                  <span className="text-slate-500 block text-[9px] uppercase">Qiymat</span>
+                  <span className="text-white font-bold">${(aiModalTrade.price * aiModalTrade.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block text-[9px] uppercase">Status</span>

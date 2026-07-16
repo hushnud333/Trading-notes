@@ -16,6 +16,35 @@ import {
   Bell, Volume2, BellOff, X
 } from "lucide-react";
 
+// Safe localStorage wrapper to prevent crash in sandboxed iframes or private windows (e.g. in Firefox)
+const memoryStorage: Record<string, string> = {};
+const safeStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      console.warn(`[safeStorage] getItem failed for key "${key}":`, e);
+      return memoryStorage[key] || null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn(`[safeStorage] setItem failed for key "${key}":`, e);
+      memoryStorage[key] = value;
+    }
+  },
+  removeItem: (key: string): void => {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      console.warn(`[safeStorage] removeItem failed for key "${key}":`, e);
+      delete memoryStorage[key];
+    }
+  }
+};
+
 export default function App() {
   const [trades, setTrades] = useState<TradeEntry[]>([]);
   const [editingTrade, setEditingTrade] = useState<TradeEntry | null>(null);
@@ -38,16 +67,22 @@ export default function App() {
   const [analyzingTradeId, setAnalyzingTradeId] = useState<string | null>(null);
 
   // Live Crypto Prices Ticker (Mock WebSocket feed for beautiful terminal experience)
-  const [btcPrice, setBtcPrice] = useState(91450.80);
-  const [ethPrice, setEthPrice] = useState(2580.40);
-  const [solPrice, setSolPrice] = useState(182.15);
+  const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({
+    BTC: 91450.80,
+    ETH: 2580.40,
+    SOL: 182.15,
+  });
+
+  const btcPrice = currentPrices.BTC || 91450.80;
+  const ethPrice = currentPrices.ETH || 2580.40;
+  const solPrice = currentPrices.SOL || 182.15;
 
   useEffect(() => {
     // Load data from LocalStorage
-    const savedTrades = localStorage.getItem("apex_trading_trades");
-    const savedChat = localStorage.getItem("apex_trading_chat");
-    const savedDiagnostics = localStorage.getItem("apex_trading_diagnostics");
-    const savedAlerts = localStorage.getItem("apex_trading_alerts");
+    const savedTrades = safeStorage.getItem("apex_trading_trades");
+    const savedChat = safeStorage.getItem("apex_trading_chat");
+    const savedDiagnostics = safeStorage.getItem("apex_trading_diagnostics");
+    const savedAlerts = safeStorage.getItem("apex_trading_alerts");
 
     if (savedTrades) {
       try {
@@ -64,7 +99,6 @@ export default function App() {
           action: "BUY",
           price: 90200.00,
           amount: 0.15,
-          leverage: 10,
           status: "WIN",
           timestamp: new Date(Date.now() - 3600000 * 24).toISOString(), // 24 hours ago
           notes: "Daily support level test at $90k. EMA 50 holding strong on 1H chart. Confirmed entry after bullish pinbar closed.",
@@ -75,14 +109,13 @@ export default function App() {
           action: "SELL",
           price: 185.50,
           amount: 50,
-          leverage: 5,
           status: "LOSS",
           timestamp: new Date(Date.now() - 3600000 * 12).toISOString(), // 12 hours ago
           notes: "Breakout attempt above key resistance level of $185. Fakeout triggered stop loss early before dumping. Lesson: wait for volume confirmation.",
         }
       ];
       setTrades(initialSeed);
-      localStorage.setItem("apex_trading_trades", JSON.stringify(initialSeed));
+      safeStorage.setItem("apex_trading_trades", JSON.stringify(initialSeed));
     }
 
     if (savedChat) {
@@ -124,18 +157,39 @@ export default function App() {
         }
       ];
       setPriceAlerts(initialAlerts);
-      localStorage.setItem("apex_trading_alerts", JSON.stringify(initialAlerts));
+      safeStorage.setItem("apex_trading_alerts", JSON.stringify(initialAlerts));
     }
 
     // Tick mockup prices for live feed feeling
     const timer = setInterval(() => {
-      setBtcPrice((p) => p + (Math.random() - 0.5) * 45);
-      setEthPrice((p) => p + (Math.random() - 0.5) * 2.5);
-      setSolPrice((p) => p + (Math.random() - 0.5) * 0.4);
+      setCurrentPrices((prev) => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach((coin) => {
+          const currentVal = updated[coin];
+          const tickSize = currentVal * 0.0005; // 0.05% max change per tick
+          updated[coin] = currentVal + (Math.random() - 0.5) * tickSize * 2;
+        });
+        return updated;
+      });
     }, 4000);
 
     return () => clearInterval(timer);
   }, []);
+
+  // Track and initialize live prices for custom coins logged in the journal
+  useEffect(() => {
+    setCurrentPrices((prev) => {
+      const updated = { ...prev };
+      let hasChanges = false;
+      trades.forEach((t) => {
+        if (!updated[t.coin]) {
+          updated[t.coin] = t.price;
+          hasChanges = true;
+        }
+      });
+      return hasChanges ? updated : prev;
+    });
+  }, [trades]);
 
   // CRUD implementation
   const handleAddTrade = (newTradeData: Omit<TradeEntry, "id">) => {
@@ -145,13 +199,13 @@ export default function App() {
     };
     const updated = [newEntry, ...trades];
     setTrades(updated);
-    localStorage.setItem("apex_trading_trades", JSON.stringify(updated));
+    safeStorage.setItem("apex_trading_trades", JSON.stringify(updated));
   };
 
   const handleDeleteTrade = (id: string) => {
     const updated = trades.filter((t) => t.id !== id);
     setTrades(updated);
-    localStorage.setItem("apex_trading_trades", JSON.stringify(updated));
+    safeStorage.setItem("apex_trading_trades", JSON.stringify(updated));
     if (editingTrade?.id === id) {
       setEditingTrade(null);
     }
@@ -160,16 +214,16 @@ export default function App() {
   const handleClearAll = () => {
     setTrades([]);
     setEditingTrade(null);
-    localStorage.setItem("apex_trading_trades", JSON.stringify([]));
+    safeStorage.setItem("apex_trading_trades", JSON.stringify([]));
     // Also clear diagnostics when clearing journal
     setCachedDiagnostics("");
-    localStorage.removeItem("apex_trading_diagnostics");
+    safeStorage.removeItem("apex_trading_diagnostics");
   };
 
   const handleUpdateTrade = (updatedTrade: TradeEntry) => {
     const updated = trades.map((t) => (t.id === updatedTrade.id ? updatedTrade : t));
     setTrades(updated);
-    localStorage.setItem("apex_trading_trades", JSON.stringify(updated));
+    safeStorage.setItem("apex_trading_trades", JSON.stringify(updated));
     setEditingTrade(null);
   };
 
@@ -184,7 +238,7 @@ export default function App() {
 
     const newMessages = [...chatMessages, userMsg];
     setChatMessages(newMessages);
-    localStorage.setItem("apex_trading_chat", JSON.stringify(newMessages));
+    safeStorage.setItem("apex_trading_chat", JSON.stringify(newMessages));
     setIsChatLoading(true);
 
     try {
@@ -210,7 +264,7 @@ export default function App() {
 
       const finalMessages = [...newMessages, aiMsg];
       setChatMessages(finalMessages);
-      localStorage.setItem("apex_trading_chat", JSON.stringify(finalMessages));
+      safeStorage.setItem("apex_trading_chat", JSON.stringify(finalMessages));
     } catch (err: any) {
       console.error("Chat fetch error:", err);
       // Append temporary error message so user has feedback
@@ -228,7 +282,7 @@ export default function App() {
 
   const handleClearChat = () => {
     setChatMessages([]);
-    localStorage.removeItem("apex_trading_chat");
+    safeStorage.removeItem("apex_trading_chat");
   };
 
   // API Call: Portfolio Diagnostics
@@ -247,7 +301,7 @@ export default function App() {
 
       const data = await response.json();
       setCachedDiagnostics(data.analysis);
-      localStorage.setItem("apex_trading_diagnostics", data.analysis);
+      safeStorage.setItem("apex_trading_diagnostics", data.analysis);
       return data.analysis;
     } catch (err: any) {
       console.error("Diagnostics error:", err);
@@ -280,7 +334,7 @@ export default function App() {
         return t;
       });
       setTrades(updatedTrades);
-      localStorage.setItem("apex_trading_trades", JSON.stringify(updatedTrades));
+      safeStorage.setItem("apex_trading_trades", JSON.stringify(updatedTrades));
 
       return data.analysis;
     } catch (err: any) {
@@ -328,8 +382,12 @@ export default function App() {
   // Alert CRUD
   const handleAddPriceAlert = (coin: 'BTC' | 'ETH' | 'SOL', condition: 'ABOVE' | 'BELOW', targetPrice: number) => {
     // Request permission for push notifications
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+    try {
+      if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+    } catch (e) {
+      console.warn("Notification permission request failed or is blocked in this browser:", e);
     }
 
     const newAlert: PriceAlert = {
@@ -343,13 +401,13 @@ export default function App() {
 
     const updated = [newAlert, ...priceAlerts];
     setPriceAlerts(updated);
-    localStorage.setItem("apex_trading_alerts", JSON.stringify(updated));
+    safeStorage.setItem("apex_trading_alerts", JSON.stringify(updated));
   };
 
   const handleDeletePriceAlert = (id: string) => {
     const updated = priceAlerts.filter((a) => a.id !== id);
     setPriceAlerts(updated);
-    localStorage.setItem("apex_trading_alerts", JSON.stringify(updated));
+    safeStorage.setItem("apex_trading_alerts", JSON.stringify(updated));
     if (activeAlertTrigger?.id === id) {
       setActiveAlertTrigger(null);
     }
@@ -382,15 +440,19 @@ export default function App() {
 
     if (hasChanges && triggeredAlert) {
       setPriceAlerts(updatedAlerts);
-      localStorage.setItem("apex_trading_alerts", JSON.stringify(updatedAlerts));
+      safeStorage.setItem("apex_trading_alerts", JSON.stringify(updatedAlerts));
       setActiveAlertTrigger(triggeredAlert);
       playAlertSound();
 
-      // Trigger Browser Notification
-      if ("Notification" in window && Notification.permission === "granted") {
-        new Notification(`🚨 Apex Signal: ${triggeredAlert.coin} hit ${triggeredAlert.condition === 'ABOVE' ? '≥' : '≤'} $${triggeredAlert.targetPrice}`, {
-          body: `Hozirgi narx: $${prices[triggeredAlert.coin].toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
-        });
+      // Trigger Browser Notification safely
+      try {
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification(`🚨 Apex Signal: ${triggeredAlert.coin} hit ${triggeredAlert.condition === 'ABOVE' ? '≥' : '≤'} $${triggeredAlert.targetPrice}`, {
+            body: `Hozirgi narx: $${prices[triggeredAlert.coin].toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+          });
+        }
+      } catch (e) {
+        console.warn("Desktop Notification trigger failed or is blocked in this browser:", e);
       }
     }
   }, [btcPrice, ethPrice, solPrice, priceAlerts, isMuted]);
@@ -534,7 +596,7 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
           {/* LEFT/CENTER WORKSPACE COLUMN (Tabs & Grid Layout) */}
-          <div className={`space-y-6 ${isCoachOpen ? "lg:col-span-8" : "lg:col-span-12"} transition-all duration-300`}>
+          <div className={`space-y-6 ${isCoachOpen ? "lg:col-span-8" : "lg:col-span-12"} min-w-0 transition-all duration-300`}>
             
             {/* View Tab 1: Journal Log */}
             {activeTab === "JOURNAL" && (
@@ -566,6 +628,7 @@ export default function App() {
                     onSelectEdit={setEditingTrade}
                     onAnalyzeTrade={handleAnalyzeTrade}
                     analyzingTradeId={analyzingTradeId}
+                    currentPrices={currentPrices}
                   />
                 </div>
               </div>
@@ -577,6 +640,7 @@ export default function App() {
                 trades={trades}
                 onGenerateDiagnostics={handleGenerateDiagnostics}
                 cachedDiagnostics={cachedDiagnostics}
+                currentPrices={currentPrices}
               />
             )}
 

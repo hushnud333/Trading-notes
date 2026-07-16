@@ -23,10 +23,10 @@ export default function TradeForm({ onAddTrade, editingTrade, onUpdateTrade, onC
   const [action, setAction] = useState<"BUY" | "SELL">("BUY");
   const [price, setPrice] = useState("");
   const [amount, setAmount] = useState("1");
-  const [leverage, setLeverage] = useState(1);
   const [status, setStatus] = useState<"WIN" | "LOSS" | "HOLD">("HOLD");
   const [timestamp, setTimestamp] = useState("");
   const [notes, setNotes] = useState("");
+  const [error, setError] = useState<string>("");
 
   // Populate form when editing
   useEffect(() => {
@@ -42,7 +42,6 @@ export default function TradeForm({ onAddTrade, editingTrade, onUpdateTrade, onC
       setAction(editingTrade.action);
       setPrice(editingTrade.price.toString());
       setAmount(editingTrade.amount.toString());
-      setLeverage(editingTrade.leverage);
       setStatus(editingTrade.status);
       setNotes(editingTrade.notes);
 
@@ -80,9 +79,9 @@ export default function TradeForm({ onAddTrade, editingTrade, onUpdateTrade, onC
     setAction("BUY");
     setPrice("");
     setAmount("1");
-    setLeverage(1);
     setStatus("HOLD");
     setNotes("");
+    setError("");
     const now = new Date();
     const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
       .toISOString()
@@ -95,7 +94,7 @@ export default function TradeForm({ onAddTrade, editingTrade, onUpdateTrade, onC
 
     const selectedCoin = isCustom ? customCoin.toUpperCase().trim() : coin;
     if (!selectedCoin) {
-      alert("Iltimos, koin nomini kiriting!");
+      setError("Iltimos, koin nomini kiriting!");
       return;
     }
 
@@ -103,14 +102,16 @@ export default function TradeForm({ onAddTrade, editingTrade, onUpdateTrade, onC
     const amountNum = parseFloat(amount);
 
     if (isNaN(priceNum) || priceNum <= 0) {
-      alert("Narx noto'g'ri kiritilgan!");
+      setError("Narx noto'g'ri kiritilgan!");
       return;
     }
 
     if (isNaN(amountNum) || amountNum <= 0) {
-      alert("Hajm/Miqdor noto'g'ri kiritilgan!");
+      setError("Hajm/Miqdor noto'g'ri kiritilgan!");
       return;
     }
+
+    setError("");
 
     // Convert input datetime-local value to ISO string
     const isoTimestamp = new Date(timestamp).toISOString();
@@ -120,7 +121,6 @@ export default function TradeForm({ onAddTrade, editingTrade, onUpdateTrade, onC
       action,
       price: priceNum,
       amount: amountNum,
-      leverage,
       status,
       timestamp: isoTimestamp,
       notes: notes.trim(),
@@ -182,6 +182,12 @@ export default function TradeForm({ onAddTrade, editingTrade, onUpdateTrade, onC
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="p-3 bg-rose-950/30 text-rose-400 text-xs rounded-xl border border-rose-500/20 flex items-center gap-2 font-medium">
+            <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0 animate-pulse" />
+            <span>{error}</span>
+          </div>
+        )}
         {/* Action Selector: Buy (Ko'pkon) vs Sell (Slvon) */}
         <div>
           <label className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">Savdo Yo'nalishi</label>
@@ -281,21 +287,9 @@ export default function TradeForm({ onAddTrade, editingTrade, onUpdateTrade, onC
           </div>
         </div>
 
-        {/* Leverage & Estimated Total */}
-        <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/60 space-y-3">
+        {/* Estimated Total */}
+        <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/60">
           <div className="flex justify-between items-center text-xs">
-            <span className="text-slate-400 font-medium">Marginal Leverage:</span>
-            <span className="font-mono text-amber-400 font-semibold">{leverage}x</span>
-          </div>
-          <input
-            type="range"
-            min="1"
-            max="100"
-            value={leverage}
-            onChange={(e) => setLeverage(parseInt(e.target.value))}
-            className="w-full accent-amber-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
-          />
-          <div className="pt-2 border-t border-slate-800/40 flex justify-between items-center text-xs">
             <span className="text-slate-400">Umumiy Qiymat:</span>
             <span className="font-mono text-white font-semibold">
               ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}

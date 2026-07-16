@@ -9,7 +9,6 @@ export interface TradeEntry {
   action: 'BUY' | 'SELL'; // BUY = Ko'pkon, SELL = Slvon
   price: number;
   amount: number;
-  leverage: number;
   status: 'WIN' | 'LOSS' | 'HOLD';
   timestamp: string;
   notes: string;
